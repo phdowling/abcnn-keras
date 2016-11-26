@@ -1,9 +1,17 @@
 from __future__ import print_function
 from keras import backend as K
-from keras.layers import Input, Convolution1D, AveragePooling1D, GlobalAveragePooling1D, Dense, Lambda, merge, Embedding, TimeDistributed, RepeatVector, Permute
+from keras.layers import Input, Convolution1D, Convolution2D, AveragePooling1D, GlobalAveragePooling1D, Dense, Lambda, merge, Embedding, TimeDistributed, RepeatVector, Permute, ZeroPadding1D, ZeroPadding2D, Reshape
 from keras.models import Model
-# from keras.utils.visualize_util import plot
 import numpy as np
+
+
+def plot(*args, **kwargs):
+    try:
+        from keras.utils.visualize_util import plot as plt
+        plt(*args, **kwargs)
+    except:
+        print("plot could not be imported, sorry.")
+        pass
 
 
 def compute_match_score(l_r):
@@ -35,8 +43,14 @@ def just_match_score(left_seq_len, right_seq_len, embed_dimensions):
 
 def ABCNN(
         left_seq_len, right_seq_len, vocab_size, embed_dimensions, nb_filter, filter_width,
-        pool_length=2, conv_depth=1, dropout=0.4, abcnn_1=True, abcnn_2=True, collect_sentence_representations=False
+        depth=2, dropout=0.4, abcnn_1=True, abcnn_2=True, collect_sentence_representations=False
 ):
+    assert depth >= 1, "Need at least one layer to build ABCNN"
+    assert not (depth == 1 and abcnn_2), "Cannot build ABCNN-2 with only one layer!"
+
+    left_sentence_representations = []
+    right_sentence_representations = []
+
     left_input = Input(shape=(left_seq_len,))
     right_input = Input(shape=(right_seq_len,))
 
@@ -47,52 +61,103 @@ def ABCNN(
         match_score = MatchScore(left_embed, right_embed)
 
         # compute attention
-        attention_left = TimeDistributed(Dense(embed_dimensions), input_shape=(left_seq_len, right_seq_len))(match_score)
+        attention_left = TimeDistributed(
+            Dense(embed_dimensions), input_shape=(left_seq_len, right_seq_len))(match_score)
         match_score_t = Permute((2, 1))(match_score)
-        attention_right = TimeDistributed(Dense(embed_dimensions), input_shape=(right_seq_len, left_seq_len))(match_score_t)
+        attention_right = TimeDistributed(
+            Dense(embed_dimensions), input_shape=(right_seq_len, left_seq_len))(match_score_t)
 
-        # apply attention TODO this should be stacked to form an "order 3 tensor" - how?
-        left_embed = merge([left_embed, attention_left], mode="mul")
-        right_embed = merge([right_embed, attention_right], mode="mul")
+        left_reshape = Reshape((1, attention_left._keras_shape[1], attention_left._keras_shape[2]))
+        right_reshape = Reshape((1, attention_right._keras_shape[1], attention_right._keras_shape[2]))
 
-    left_sentence_representations = []
-    right_sentence_representations = []
+        attention_left = left_reshape(attention_left)
+        left_embed = left_reshape(left_embed)
 
-    pool_left = left_embed
-    pool_right = right_embed
-    for i in range(conv_depth):
-        # TODO should this be wide convolution?
-        conv_left = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="same")(pool_left)
-        conv_right = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="same")(pool_right)
+        attention_right = right_reshape(attention_right)
+        right_embed = right_reshape(right_embed)
+
+        # concat attention
+        # (samples, channels, rows, cols)
+        left_embed = merge([left_embed, attention_left], mode="concat", concat_axis=1)
+        right_embed = merge([right_embed, attention_right], mode="concat", concat_axis=1)
+
+        # Padding so we have wide convolution
+        left_embed_padded = ZeroPadding2D((filter_width - 1, 0))(left_embed)
+        right_embed_padded = ZeroPadding2D((filter_width - 1, 0))(right_embed)
+
+        # 2D convolutions so we have the ability to treat channels. Effectively, we are still doing 1-D convolutions.
+        conv_left = Convolution2D(
+            nb_filter=nb_filter, nb_row=filter_width, nb_col=embed_dimensions, activation="tanh", border_mode="valid")(
+            left_embed_padded
+        )
+        # Reshape and Permute to get back to 1-D
+        conv_left = (Reshape((conv_left._keras_shape[1], conv_left._keras_shape[2])))(conv_left)
+        conv_left = Permute((2, 1))(conv_left)
+
+        conv_right = Convolution2D(
+            nb_filter=nb_filter, nb_row=filter_width, nb_col=embed_dimensions, activation="tanh", border_mode="valid")(
+            right_embed_padded
+        )
+        # Reshape and Permute to get back to 1-D
+        conv_right = (Reshape((conv_right._keras_shape[1], conv_right._keras_shape[2])))(conv_right)
+        conv_right = Permute((2, 1))(conv_right)
+    else:
+        # Padding so we have wide convolution
+        left_embed_padded = ZeroPadding1D(filter_width - 1)(left_embed)
+        right_embed_padded = ZeroPadding1D(filter_width - 1)(right_embed)
+        conv_left = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(left_embed_padded)
+        conv_right = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(right_embed_padded)
+
+    pool_left = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_left)
+    pool_right = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_right)
+
+    assert pool_left._keras_shape[1] == left_seq_len
+    assert pool_right._keras_shape[1] == right_seq_len
+
+    if collect_sentence_representations or depth == 1:  # always collect last layers global representation
+        left_sentence_representations.append(GlobalAveragePooling1D()(conv_left))
+        right_sentence_representations.append(GlobalAveragePooling1D()(conv_right))
+
+    # ###################### #
+    # ### END OF ABCNN-1 ### #
+    # ###################### #
+
+    for i in range(depth - 1):
+        pool_left = ZeroPadding1D(filter_width - 1)(pool_left)
+        pool_right = ZeroPadding1D(filter_width - 1)(pool_right)
+        # Wide convolution
+        conv_left = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(pool_left)
+        conv_right = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(pool_right)
+
         if abcnn_2:
             conv_match_score = MatchScore(conv_left, conv_right)
 
             # compute attention
-            conv_attention_left = Lambda(
-                lambda match: K.sum(match, axis=-1),
-                output_shape=(conv_match_score._keras_shape[1],)
-            )(conv_match_score)
-            conv_attention_right = Lambda(
-                lambda match: K.sum(match, axis=-2),
-                output_shape=(conv_match_score._keras_shape[2],)
-            )(conv_match_score)
-            left_conv_attn_mask_t = RepeatVector(nb_filter)(conv_attention_left)
-            right_conv_attn_mask_t = RepeatVector(nb_filter)(conv_attention_right)
+            conv_attention_left = Lambda(lambda match: K.sum(match, axis=-1), output_shape=(conv_match_score._keras_shape[1],))(conv_match_score)
+            conv_attention_right = Lambda(lambda match: K.sum(match, axis=-2), output_shape=(conv_match_score._keras_shape[2],))(conv_match_score)
 
-            conv_attention_left = Permute((2, 1))(left_conv_attn_mask_t)
-            conv_attention_right = Permute((2, 1))(right_conv_attn_mask_t)
+            conv_attention_left = Permute((2, 1))(RepeatVector(nb_filter)(conv_attention_left))
+            conv_attention_right = Permute((2, 1))(RepeatVector(nb_filter)(conv_attention_right))
 
-            # apply attention
+            # apply attention  TODO is "multiply each value by the sum of it's respective attention row/column" correct?
             conv_left = merge([conv_left, conv_attention_left], mode="mul")
             conv_right = merge([conv_right, conv_attention_right], mode="mul")
 
-        pool_left = AveragePooling1D(pool_length=pool_length)(conv_left)
-        pool_right = AveragePooling1D(pool_length=pool_length)(conv_right)
+        pool_left = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_left)
+        pool_right = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_right)
 
-        if collect_sentence_representations or i == conv_depth - 1:  # always collect last layers global representation
+        assert pool_left._keras_shape[1] == left_seq_len
+        assert pool_right._keras_shape[1] == right_seq_len
+
+        if collect_sentence_representations or (i == (depth - 2)):  # always collect last layers global representation
             left_sentence_representations.append(GlobalAveragePooling1D()(conv_left))
             right_sentence_representations.append(GlobalAveragePooling1D()(conv_right))
 
+    # ###################### #
+    # ### END OF ABCNN-2 ### #
+    # ###################### #
+
+    # Merge collected sentence representations if necessary
     left_sentence_rep = left_sentence_representations.pop(-1)
     if left_sentence_representations:
         left_sentence_rep = merge([left_sentence_rep] + left_sentence_representations, mode="concat")
@@ -103,6 +168,7 @@ def ABCNN(
 
     global_representation = merge([left_sentence_rep, right_sentence_rep], mode="concat")
 
+    # Add logistic regression on top.
     classify = Dense(1, activation="sigmoid")(global_representation)
 
     return Model([left_input, right_input], output=classify)
@@ -130,8 +196,8 @@ def test_matchscore():
 
 
 if __name__ == "__main__":
-    num_samples = 1000
-    vocab_size = 3500
+    num_samples = 230
+    vocab_size = 1500
 
     left_seq_len = 12
     right_seq_len = 8
@@ -145,17 +211,63 @@ if __name__ == "__main__":
         np.random.randint(0, vocab_size, (num_samples, left_seq_len,)),
         np.random.randint(0, vocab_size, (num_samples, right_seq_len,))
     ]
-    Y = np.random.randint(0, 1, (num_samples,))
+    Y = np.random.randint(0, 1, (num_samples,)).astype(dtype=np.float64)
+
+    plot_all = False
+    if plot_all:
+        bcnn = ABCNN(
+            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+            collect_sentence_representations=True, abcnn_1=False, abcnn_2=False
+        )
+        plot(bcnn, to_file="bcnn.svg")
+
+        bcnn_deep_nocollect = ABCNN(
+            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=4,
+            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+            collect_sentence_representations=False, abcnn_1=False, abcnn_2=False
+        )
+        plot(bcnn_deep_nocollect, to_file="bcnn_deep_nocollect.svg")
+
+        abcnn1 = ABCNN(
+            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+            collect_sentence_representations=True, abcnn_1=True, abcnn_2=False
+        )
+        plot(abcnn1, to_file="abcnn1.svg")
+
+        abcnn2 = ABCNN(
+            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+            collect_sentence_representations=True, abcnn_1=False, abcnn_2=True
+        )
+        plot(abcnn2, to_file="abcnn2.svg")
+
+        abcnn3 = ABCNN(
+            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+            collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
+        )
+        plot(abcnn3, to_file="abcnn3.svg")
+
+        abcnn3_deep = ABCNN(
+            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=4,
+            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+            collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
+        )
+        plot(abcnn3_deep, to_file="abcnn3-deep.svg")
 
     model = ABCNN(
-        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, conv_depth=2,
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
         embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
-        collect_sentence_representations=True
+        collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
     )
 
-    model.compile(optimizer="sgd", loss="mse")
+    model.compile(optimizer="sgd", loss="mse", metrics=["acc"])
+    print(model.predict(X)[0])
     # plot(model, to_file="abcnn.svg")
-    model.fit(X, Y)
+    model.fit(X, Y, nb_epoch=5)
+    print(model.predict(X)[0])
 
 
 
