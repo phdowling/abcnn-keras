@@ -2,6 +2,7 @@ from __future__ import print_function
 from keras import backend as K
 from keras.layers import Input, Convolution1D, Convolution2D, AveragePooling1D, GlobalAveragePooling1D, Dense, Lambda, merge, Embedding, TimeDistributed, RepeatVector, Permute, ZeroPadding1D, ZeroPadding2D, Reshape
 from keras.models import Model
+from sklearn.metrics.pairwise import euclidean_distances
 import numpy as np
 
 
@@ -14,24 +15,26 @@ def plot(*args, **kwargs):
         pass
 
 
-def compute_match_score(l_r):
+def compute_match_score(l_r_dot):  # TODO This is causing NaN values during backprop, find bug
+    l, r, dot = l_r_dot
     return 1. / (
         1. +
         K.sqrt(
-            -2 * K.batch_dot(l_r[0], l_r[1], [2, 2]) +
-            K.expand_dims(K.sum(K.square(l_r[0]), axis=2), -1) +
-            K.expand_dims(K.sum(K.square(l_r[1]), axis=2), 1)
+            -2 * dot +
+            K.expand_dims(K.sum(K.square(l), axis=2), -1) +
+            K.expand_dims(K.sum(K.square(r), axis=2), 1)
         )
     )
 
 
 def MatchScore(l, r):
-    # dot = merge([l, r], mode="dot")
-    return merge(
-        [l, r],
-        mode=compute_match_score,
-        output_shape=lambda shapes: (None, shapes[0][1], shapes[1][1])
-    )
+    dot = merge([l, r], mode="dot")
+    return dot
+    # return merge(  # TODO buggy
+    #     [l, r, dot],
+    #     mode=compute_match_score,
+    #     output_shape=lambda shapes: (None, shapes[0][1], shapes[1][1])
+    # )
 
 
 def just_match_score(left_seq_len, right_seq_len, embed_dimensions):
@@ -43,7 +46,8 @@ def just_match_score(left_seq_len, right_seq_len, embed_dimensions):
 
 def ABCNN(
         left_seq_len, right_seq_len, vocab_size, embed_dimensions, nb_filter, filter_width,
-        depth=2, dropout=0.4, abcnn_1=True, abcnn_2=True, collect_sentence_representations=False
+        depth=2, dropout=0.4, abcnn_1=True, abcnn_2=True, collect_sentence_representations=False, aux_outputs=False,
+        abcnn1_2D=True
 ):
     assert depth >= 1, "Need at least one layer to build ABCNN"
     assert not (depth == 1 and abcnn_2), "Cannot build ABCNN-2 with only one layer!"
@@ -62,10 +66,10 @@ def ABCNN(
 
         # compute attention
         attention_left = TimeDistributed(
-            Dense(embed_dimensions), input_shape=(left_seq_len, right_seq_len))(match_score)
+            Dense(embed_dimensions, activation="relu"), input_shape=(left_seq_len, right_seq_len))(match_score)
         match_score_t = Permute((2, 1))(match_score)
         attention_right = TimeDistributed(
-            Dense(embed_dimensions), input_shape=(right_seq_len, left_seq_len))(match_score_t)
+            Dense(embed_dimensions, activation="relu"), input_shape=(right_seq_len, left_seq_len))(match_score_t)
 
         left_reshape = Reshape((1, attention_left._keras_shape[1], attention_left._keras_shape[2]))
         right_reshape = Reshape((1, attention_right._keras_shape[1], attention_right._keras_shape[2]))
@@ -90,17 +94,20 @@ def ABCNN(
             nb_filter=nb_filter, nb_row=filter_width, nb_col=embed_dimensions, activation="tanh", border_mode="valid")(
             left_embed_padded
         )
+
         # Reshape and Permute to get back to 1-D
         conv_left = (Reshape((conv_left._keras_shape[1], conv_left._keras_shape[2])))(conv_left)
         conv_left = Permute((2, 1))(conv_left)
 
         conv_right = Convolution2D(
-            nb_filter=nb_filter, nb_row=filter_width, nb_col=embed_dimensions, activation="tanh", border_mode="valid")(
+            nb_filter=nb_filter, nb_row=filter_width, nb_col=embed_dimensions, activation="tanh",
+            border_mode="valid")(
             right_embed_padded
         )
         # Reshape and Permute to get back to 1-D
         conv_right = (Reshape((conv_right._keras_shape[1], conv_right._keras_shape[2])))(conv_right)
         conv_right = Permute((2, 1))(conv_right)
+
     else:
         # Padding so we have wide convolution
         left_embed_padded = ZeroPadding1D(filter_width - 1)(left_embed)
@@ -196,8 +203,8 @@ def test_matchscore():
 
 
 if __name__ == "__main__":
-    num_samples = 230
-    vocab_size = 1500
+    num_samples = 210
+    vocab_size = 150
 
     left_seq_len = 12
     right_seq_len = 8
@@ -211,7 +218,7 @@ if __name__ == "__main__":
         np.random.randint(0, vocab_size, (num_samples, left_seq_len,)),
         np.random.randint(0, vocab_size, (num_samples, right_seq_len,))
     ]
-    Y = np.random.randint(0, 1, (num_samples,)).astype(dtype=np.float64)
+    Y = np.random.randint(0, 2, (num_samples,))
 
     plot_all = False
     if plot_all:
@@ -263,12 +270,6 @@ if __name__ == "__main__":
         collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
     )
 
-    model.compile(optimizer="sgd", loss="mse", metrics=["acc"])
+    model.compile(optimizer="rmsprop", loss="binary_crossentropy", metrics=["acc"])
+    model.fit(X, Y, nb_epoch=3)
     print(model.predict(X)[0])
-    # plot(model, to_file="abcnn.svg")
-    model.fit(X, Y, nb_epoch=5)
-    print(model.predict(X)[0])
-
-
-
-
