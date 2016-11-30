@@ -6,16 +6,7 @@ import numpy as np
 from sklearn.metrics.pairwise import euclidean_distances, cosine_similarity
 
 
-def plot(*args, **kwargs):
-    try:
-        from keras.utils.visualize_util import plot as plt
-        plt(*args, **kwargs)
-    except:
-        print("plot could not be imported, sorry.")
-        pass
-
-
-def compute_euclidean_match_score(l_r):  # TODO This is causing NaN values during backprop, find bug
+def compute_euclidean_match_score(l_r):
     l, r = l_r
     return 1. / (1. +
         K.sqrt(
@@ -58,6 +49,13 @@ def cos_match_fn(left_seq_len, right_seq_len, embed_dimensions):
 
 
 def test_matchscore():
+    num_samples = 210
+
+    left_seq_len = 12
+    right_seq_len = 8
+
+    embed_dimensions = 50
+
     left = np.random.random((num_samples, left_seq_len, embed_dimensions))
     right = np.random.random((num_samples, right_seq_len, embed_dimensions))
 
@@ -83,21 +81,4 @@ def test_matchscore():
 
 
 if __name__ == "__main__":
-    num_samples = 210
-    vocab_size = 150
-
-    left_seq_len = 12
-    right_seq_len = 8
-
-    embed_dimensions = 50
-
-    nb_filter = 64
-    filter_width = 3
-
-    X = [
-        np.random.randint(0, vocab_size, (num_samples, left_seq_len,)),
-        np.random.randint(0, vocab_size, (num_samples, right_seq_len,))
-    ]
-    Y = np.random.randint(0, 2, (num_samples,))
-
     test_matchscore()
