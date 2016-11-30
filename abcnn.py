@@ -2,7 +2,6 @@ from __future__ import print_function
 from keras import backend as K
 from keras.layers import Input, Convolution1D, Convolution2D, AveragePooling1D, GlobalAveragePooling1D, Dense, Lambda, merge, Embedding, TimeDistributed, RepeatVector, Permute, ZeroPadding1D, ZeroPadding2D, Reshape
 from keras.models import Model
-from sklearn.metrics.pairwise import euclidean_distances
 import numpy as np
 
 
@@ -15,42 +14,53 @@ def plot(*args, **kwargs):
         pass
 
 
-def compute_match_score(l_r_dot):  # TODO This is causing NaN values during backprop, find bug
-    l, r, dot = l_r_dot
-    return 1. / (
-        1. +
+def compute_euclidean_match_score(l_r):  # TODO This is causing NaN values during backprop, find bug
+    l, r = l_r
+    return 1. / (1. +
         K.sqrt(
-            -2 * dot +
-            K.expand_dims(K.sum(K.square(l), axis=2), -1) +
+            -2 * K.batch_dot(l, r, axes=[2, 2]) +
+            K.expand_dims(K.sum(K.square(l), axis=2), 2) +
             K.expand_dims(K.sum(K.square(r), axis=2), 1)
         )
     )
 
 
-def MatchScore(l, r):
-    dot = merge([l, r], mode="dot")
-    return dot
-    # return merge(  # TODO buggy
-    #     [l, r, dot],
-    #     mode=compute_match_score,
-    #     output_shape=lambda shapes: (None, shapes[0][1], shapes[1][1])
-    # )
+def compute_cos_match_score(l_r):  # TODO This is causing NaN values during backprop, find bug
+    l, r = l_r
+    return K.batch_dot(
+        K.l2_normalize(l, axis=-1),
+        K.l2_normalize(r, axis=-1),
+        axes=[2, 2]
+    )
 
 
-def just_match_score(left_seq_len, right_seq_len, embed_dimensions):
-    lin = Input(shape=(left_seq_len, embed_dimensions))
-    rin = Input(shape=(right_seq_len, embed_dimensions))
-    matchscore = MatchScore(lin, rin)
-    return Model([lin, rin], matchscore)
+def MatchScore(l, r, mode="euclidean"):
+    if mode == "euclidean":
+        return merge(
+            [l, r],
+            mode=compute_euclidean_match_score,
+            output_shape=lambda shapes: (None, shapes[0][1], shapes[1][1])
+        )
+    elif mode == "cos":
+        return merge(
+            [l, r],
+            mode=compute_cos_match_score,
+            output_shape=lambda shapes: (None, shapes[0][1], shapes[1][1])
+        )
+    elif mode == "dot":
+        return merge([l, r], mode="dot")
+    else:
+        raise ValueError("Unknown match score mode %s" % mode)
 
 
 def ABCNN(
         left_seq_len, right_seq_len, vocab_size, embed_dimensions, nb_filter, filter_width,
-        depth=2, dropout=0.4, abcnn_1=True, abcnn_2=True, collect_sentence_representations=False, aux_outputs=False,
-        abcnn1_2D=True
+        depth=2, dropout=0.4, abcnn_1=True, abcnn_2=True, collect_sentence_representations=False, mode="euclidean"
 ):
     assert depth >= 1, "Need at least one layer to build ABCNN"
     assert not (depth == 1 and abcnn_2), "Cannot build ABCNN-2 with only one layer!"
+
+    print("Using %s match score" % mode)
 
     left_sentence_representations = []
     right_sentence_representations = []
@@ -62,7 +72,7 @@ def ABCNN(
     right_embed = Embedding(input_dim=vocab_size, output_dim=embed_dimensions, dropout=dropout)(right_input)
 
     if abcnn_1:
-        match_score = MatchScore(left_embed, right_embed)
+        match_score = MatchScore(left_embed, right_embed, mode=mode)
 
         # compute attention
         attention_left = TimeDistributed(
@@ -137,7 +147,7 @@ def ABCNN(
         conv_right = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(pool_right)
 
         if abcnn_2:
-            conv_match_score = MatchScore(conv_left, conv_right)
+            conv_match_score = MatchScore(conv_left, conv_right, mode=mode)
 
             # compute attention
             conv_attention_left = Lambda(lambda match: K.sum(match, axis=-1), output_shape=(conv_match_score._keras_shape[1],))(conv_match_score)
@@ -181,28 +191,7 @@ def ABCNN(
     return Model([left_input, right_input], output=classify)
 
 
-def test_matchscore():
-    left = np.random.random((num_samples, left_seq_len, embed_dimensions))
-    right = np.random.random((num_samples, right_seq_len, embed_dimensions))
-    model = just_match_score(left_seq_len, right_seq_len, embed_dimensions)
-
-    model.compile(optimizer="sgd", loss="categorical_crossentropy")
-    # model.fit(X, y)
-    res = model.predict([left, right])
-    print(res)
-    print(res.shape)
-    test = 1. / (1. + np.sqrt(
-        -2 * np.dot(left[0], right[0].T) +
-        np.expand_dims(np.sum(np.square(left[0]), axis=1), -1) +
-        np.expand_dims(np.sum(np.square(right[0]), axis=1), 0)
-    ))
-    print(res[0] - test)
-    print(test.shape)
-    print(np.sum(test, axis=-1).shape)
-    print(np.sum(test, axis=-2).shape)
-
-
-if __name__ == "__main__":
+def main():
     num_samples = 210
     vocab_size = 150
 
@@ -220,56 +209,62 @@ if __name__ == "__main__":
     ]
     Y = np.random.randint(0, 2, (num_samples,))
 
-    plot_all = False
-    if plot_all:
-        bcnn = ABCNN(
-            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
-            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
-            collect_sentence_representations=True, abcnn_1=False, abcnn_2=False
-        )
-        plot(bcnn, to_file="bcnn.svg")
-
-        bcnn_deep_nocollect = ABCNN(
-            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=4,
-            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
-            collect_sentence_representations=False, abcnn_1=False, abcnn_2=False
-        )
-        plot(bcnn_deep_nocollect, to_file="bcnn_deep_nocollect.svg")
-
-        abcnn1 = ABCNN(
-            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
-            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
-            collect_sentence_representations=True, abcnn_1=True, abcnn_2=False
-        )
-        plot(abcnn1, to_file="abcnn1.svg")
-
-        abcnn2 = ABCNN(
-            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
-            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
-            collect_sentence_representations=True, abcnn_1=False, abcnn_2=True
-        )
-        plot(abcnn2, to_file="abcnn2.svg")
-
-        abcnn3 = ABCNN(
-            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
-            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
-            collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
-        )
-        plot(abcnn3, to_file="abcnn3.svg")
-
-        abcnn3_deep = ABCNN(
-            left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=4,
-            embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
-            collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
-        )
-        plot(abcnn3_deep, to_file="abcnn3-deep.svg")
+    # plot_all(left_seq_len, right_seq_len, vocab_size, embed_dimensions, nb_filter, filter_width)
 
     model = ABCNN(
         left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
         embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
-        collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
+        collect_sentence_representations=True, abcnn_1=True, abcnn_2=True,
+        mode="euclidean"
     )
 
     model.compile(optimizer="rmsprop", loss="binary_crossentropy", metrics=["acc"])
     model.fit(X, Y, nb_epoch=3)
     print(model.predict(X)[0])
+
+
+def plot_all(left_seq_len, right_seq_len, vocab_size, embed_dimensions, nb_filter, filter_width):
+    bcnn = ABCNN(
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        collect_sentence_representations=True, abcnn_1=False, abcnn_2=False
+    )
+    plot(bcnn, to_file="bcnn.svg")
+
+    bcnn_deep_nocollect = ABCNN(
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=4,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        collect_sentence_representations=False, abcnn_1=False, abcnn_2=False
+    )
+    plot(bcnn_deep_nocollect, to_file="bcnn_deep_nocollect.svg")
+
+    abcnn1 = ABCNN(
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        collect_sentence_representations=True, abcnn_1=True, abcnn_2=False
+    )
+    plot(abcnn1, to_file="abcnn1.svg")
+
+    abcnn2 = ABCNN(
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        collect_sentence_representations=True, abcnn_1=False, abcnn_2=True
+    )
+    plot(abcnn2, to_file="abcnn2.svg")
+
+    abcnn3 = ABCNN(
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
+    )
+    plot(abcnn3, to_file="abcnn3.svg")
+
+    abcnn3_deep = ABCNN(
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=4,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
+    )
+    plot(abcnn3_deep, to_file="abcnn3-deep.svg")
+
+if __name__ == "__main__":
+    main()
