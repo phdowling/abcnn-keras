@@ -14,17 +14,17 @@ def plot(*args, **kwargs):
         pass
 
 
-def compute_euclidean_match_score(l_r):  # TODO This is causing NaN values during backprop, find bug
-    l, r = l_r
-    return 1. / (1. +
-        K.sqrt(
-            -2 * K.batch_dot(l, r, axes=[2, 2]) +
-            K.expand_dims(K.sum(K.square(l), axis=2), 2) +
-            K.expand_dims(K.sum(K.square(r), axis=2), 1)
-        )
-    )
-
-
+# def compute_euclidean_match_score(l_r):  # TODO This is causing NaN values during backprop, find bug
+#     l, r = l_r
+#     return 1. / (1. +
+#         K.sqrt(
+#             -2 * K.batch_dot(l, r, axes=[2, 2]) +
+#             K.expand_dims(K.sum(K.square(l), axis=2), 2) +
+#             K.expand_dims(K.sum(K.square(r), axis=2), 1)
+#         )
+#     )
+#
+#
 def compute_cos_match_score(l_r):  # TODO This is causing NaN values during backprop, find bug
     l, r = l_r
     return K.batch_dot(
@@ -32,6 +32,34 @@ def compute_cos_match_score(l_r):  # TODO This is causing NaN values during back
         K.l2_normalize(r, axis=-1),
         axes=[2, 2]
     )
+
+
+def compute_euclidean_match_score(l_r):
+    l, r = l_r
+    denominator = 1. + K.sqrt(
+        -2 * K.batch_dot(l, r, axes=[2, 2]) +
+        K.expand_dims(K.sum(K.square(l), axis=2), 2) +
+        K.expand_dims(K.sum(K.square(r), axis=2), 1)
+    )
+    denominator = K.maximum(denominator, K.epsilon())
+    return 1. / denominator
+
+
+# def compute_cos_match_score(l_r):
+#     # K.batch_dot(
+#     #     K.l2_normalize(l, axis=-1),
+#     #     K.l2_normalize(r, axis=-1),
+#     #     axes=[2, 2]
+#     # )
+#
+#     l, r = l_r
+#     denominator = K.sqrt(K.batch_dot(l, l, axes=[2, 2]) *
+#                          K.batch_dot(r, r, axes=[2, 2]))
+#     denominator = K.maximum(denominator, K.epsilon())
+#     output = K.batch_dot(l, r, axes=[2, 2]) / denominator
+#     # output = K.expand_dims(output, 1)
+#     # denominator = K.maximum(denominator, K.epsilon())
+#     return output
 
 
 def MatchScore(l, r, mode="euclidean"):
@@ -54,7 +82,7 @@ def MatchScore(l, r, mode="euclidean"):
 
 
 def ABCNN(
-        left_seq_len, right_seq_len, vocab_size, embed_dimensions, nb_filter, filter_width,
+        left_seq_len, right_seq_len, embed_dimensions, nb_filter, filter_width,
         depth=2, dropout=0.4, abcnn_1=True, abcnn_2=True, collect_sentence_representations=False, mode="euclidean"
 ):
     assert depth >= 1, "Need at least one layer to build ABCNN"
@@ -65,11 +93,13 @@ def ABCNN(
     left_sentence_representations = []
     right_sentence_representations = []
 
-    left_input = Input(shape=(left_seq_len,))
-    right_input = Input(shape=(right_seq_len,))
+    left_input = Input(shape=(left_seq_len, embed_dimensions))
+    right_input = Input(shape=(right_seq_len, embed_dimensions))
 
-    left_embed = Embedding(input_dim=vocab_size, output_dim=embed_dimensions, dropout=dropout)(left_input)
-    right_embed = Embedding(input_dim=vocab_size, output_dim=embed_dimensions, dropout=dropout)(right_input)
+    left_embed = left_input
+    right_embed = right_input
+    # left_embed = Embedding(input_dim=vocab_size, output_dim=embed_dimensions, dropout=dropout)(left_input)
+    # right_embed = Embedding(input_dim=vocab_size, output_dim=embed_dimensions, dropout=dropout)(right_input)
 
     if abcnn_1:
         match_score = MatchScore(left_embed, right_embed, mode=mode)
@@ -193,7 +223,6 @@ def ABCNN(
 
 def main():
     num_samples = 210
-    vocab_size = 150
 
     left_seq_len = 12
     right_seq_len = 8
@@ -203,19 +232,24 @@ def main():
     nb_filter = 64
     filter_width = 3
 
+    # X = [
+    #     np.random.randint(0, vocab_size, (num_samples, left_seq_len,)),
+    #     np.random.randint(0, vocab_size, (num_samples, right_seq_len,))
+    # ]
     X = [
-        np.random.randint(0, vocab_size, (num_samples, left_seq_len,)),
-        np.random.randint(0, vocab_size, (num_samples, right_seq_len,))
+        np.random.random(size=(num_samples, left_seq_len, embed_dimensions)),
+        np.random.random(size=(num_samples, right_seq_len, embed_dimensions))
     ]
     Y = np.random.randint(0, 2, (num_samples,))
 
     # plot_all(left_seq_len, right_seq_len, vocab_size, embed_dimensions, nb_filter, filter_width)
 
     model = ABCNN(
-        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
         embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
         collect_sentence_representations=True, abcnn_1=True, abcnn_2=True,
-        mode="euclidean"
+        mode="euclidean",
+        # mode="cos"
     )
 
     model.compile(optimizer="rmsprop", loss="binary_crossentropy", metrics=["acc"])

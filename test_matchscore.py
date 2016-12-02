@@ -8,22 +8,30 @@ from sklearn.metrics.pairwise import euclidean_distances, cosine_similarity
 
 def compute_euclidean_match_score(l_r):
     l, r = l_r
-    return 1. / (1. +
-        K.sqrt(
-            -2 * K.batch_dot(l, r, axes=[2, 2]) +
-            K.expand_dims(K.sum(K.square(l), axis=2), 2) +
-            K.expand_dims(K.sum(K.square(r), axis=2), 1)
-        )
+    denominator = 1. + K.sqrt(
+        -2 * K.batch_dot(l, r, axes=[2, 2]) +
+        K.expand_dims(K.sum(K.square(l), axis=2), 2) +
+        K.expand_dims(K.sum(K.square(r), axis=2), 1)
     )
+    denominator = K.maximum(denominator, K.epsilon())
+    return 1. / denominator
 
 
 def compute_cos_match_score(l_r):
+    # K.batch_dot(
+    #     K.l2_normalize(l, axis=-1),
+    #     K.l2_normalize(r, axis=-1),
+    #     axes=[2, 2]
+    # )
+
     l, r = l_r
-    return K.batch_dot(
-        K.l2_normalize(l, axis=-1),
-        K.l2_normalize(r, axis=-1),
-        axes=[2, 2]
-    )
+    denominator = K.sqrt(K.batch_dot(l, l, axes=[2, 2]) *
+                         K.batch_dot(r, r, axes=[2, 2]))
+    denominator = K.maximum(denominator, K.epsilon())
+    output = K.batch_dot(l, r, axes=[2, 2]) / denominator
+    # output = K.expand_dims(output, 1)
+    # denominator = K.maximum(denominator, K.epsilon())
+    return output
 
 
 def MatchScore(l, r, use_fn=compute_cos_match_score):
