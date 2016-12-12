@@ -101,9 +101,9 @@ def ABCNN(
     left_embed = left_input
     right_embed = right_input
 
-    if batch_normalize:
-        left_embed = BatchNormalization()(left_embed)
-        right_embed = BatchNormalization()(right_embed)
+    # if batch_normalize:
+    #     left_embed = BatchNormalization()(left_embed)
+    #     right_embed = BatchNormalization()(right_embed)
 
     filter_width = filter_widths.pop(0)
     if abcnn_1:
