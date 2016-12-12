@@ -161,9 +161,9 @@ def ABCNN(
         conv_left = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(left_embed_padded)
         conv_right = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(right_embed_padded)
 
-    if batch_normalize:
-        conv_left = BatchNormalization()(conv_left)
-        conv_right = BatchNormalization()(conv_right)
+    # if batch_normalize:
+    #     conv_left = BatchNormalization()(conv_left)
+    #     conv_right = BatchNormalization()(conv_right)
 
     conv_left = Dropout(dropout)(conv_left)
     conv_right = Dropout(dropout)(conv_right)
@@ -204,9 +204,9 @@ def ABCNN(
             conv_left = merge([conv_left, conv_attention_left], mode="mul")
             conv_right = merge([conv_right, conv_attention_right], mode="mul")
 
-        if batch_normalize:
-            conv_left = BatchNormalization()(conv_left)
-            conv_right = BatchNormalization()(conv_right)
+        # if batch_normalize:
+        #     conv_left = BatchNormalization()(conv_left)
+        #     conv_right = BatchNormalization()(conv_right)
 
         conv_left = Dropout(dropout)(conv_left)
         conv_right = Dropout(dropout)(conv_right)
