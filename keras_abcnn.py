@@ -134,7 +134,9 @@ def ABCNN(
 
         # 2D convolutions so we have the ability to treat channels. Effectively, we are still doing 1-D convolutions.
         conv_left = Convolution2D(
-            nb_filter=nb_filter, nb_row=filter_width, nb_col=embed_dimensions, activation="tanh", border_mode="valid")(
+            nb_filter=nb_filter, nb_row=filter_width, nb_col=embed_dimensions, activation="tanh", border_mode="valid",
+            dim_ordering="th"
+        )(
             left_embed_padded
         )
 
@@ -144,7 +146,8 @@ def ABCNN(
 
         conv_right = Convolution2D(
             nb_filter=nb_filter, nb_row=filter_width, nb_col=embed_dimensions, activation="tanh",
-            border_mode="valid")(
+            border_mode="valid",
+            dim_ordering="th")(
             right_embed_padded
         )
         # Reshape and Permute to get back to 1-D
@@ -164,8 +167,8 @@ def ABCNN(
     pool_left = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_left)
     pool_right = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_right)
 
-    assert pool_left._keras_shape[1] == left_seq_len
-    assert pool_right._keras_shape[1] == right_seq_len
+    assert pool_left._keras_shape[1] == left_seq_len, "%s != %s" % (pool_left._keras_shape[1], left_seq_len)
+    assert pool_right._keras_shape[1] == right_seq_len , "%s != %s" % (pool_right._keras_shape[1], right_seq_len)
 
     if collect_sentence_representations or depth == 1:  # always collect last layers global representation
         left_sentence_representations.append(GlobalAveragePooling1D()(conv_left))
