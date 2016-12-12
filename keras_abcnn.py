@@ -81,11 +81,14 @@ def MatchScore(l, r, mode="euclidean"):
 
 
 def ABCNN(
-        left_seq_len, right_seq_len, embed_dimensions, nb_filter, filter_width,
+        left_seq_len, right_seq_len, embed_dimensions, nb_filter, filter_widths,
         depth=2, dropout=0.4, abcnn_1=True, abcnn_2=True, collect_sentence_representations=False, mode="euclidean"
 ):
     assert depth >= 1, "Need at least one layer to build ABCNN"
     assert not (depth == 1 and abcnn_2), "Cannot build ABCNN-2 with only one layer!"
+    if type(filter_widths) == int:
+        filter_widths = [filter_widths] * depth
+    assert len(filter_widths) == depth
 
     print("Using %s match score" % mode)
 
@@ -101,6 +104,7 @@ def ABCNN(
     # right_embed = Embedding(input_dim=vocab_size, output_dim=embed_dimensions, dropout=dropout)(right_input)
 
     if abcnn_1:
+        filter_width = filter_widths.pop(0)
         match_score = MatchScore(left_embed, right_embed, mode=mode)
 
         # compute attention
@@ -172,6 +176,7 @@ def ABCNN(
     # ###################### #
 
     for i in range(depth - 1):
+        filter_width = filter_widths.pop(0)
         pool_left = ZeroPadding1D(filter_width - 1)(pool_left)
         pool_right = ZeroPadding1D(filter_width - 1)(pool_right)
         # Wide convolution
