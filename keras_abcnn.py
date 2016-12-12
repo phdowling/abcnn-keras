@@ -1,6 +1,6 @@
 from __future__ import print_function
 from keras import backend as K
-from keras.layers import Input, Convolution1D, Convolution2D, AveragePooling1D, GlobalAveragePooling1D, Dense, Lambda, merge, Embedding, TimeDistributed, RepeatVector, Permute, ZeroPadding1D, ZeroPadding2D, Reshape
+from keras.layers import Input, Convolution1D, Convolution2D, AveragePooling1D, GlobalAveragePooling1D, Dense, Lambda, merge, TimeDistributed, RepeatVector, Permute, ZeroPadding1D, ZeroPadding2D, Reshape, Dropout
 from keras.models import Model
 import numpy as np
 
@@ -10,11 +10,10 @@ def plot(*args, **kwargs):
         from keras.utils.visualize_util import plot as plt
         plt(*args, **kwargs)
     except:
-        print("plot could not be imported, sorry.")
-        pass
+       print("plot could not be imported, sorry.")
 
 
-# def compute_euclidean_match_score(l_r):  # TODO This is causing NaN values during backprop, find bug
+# def compute_euclidean_match_score(l_r):
 #     l, r = l_r
 #     return 1. / (1. +
 #         K.sqrt(
@@ -25,7 +24,7 @@ def plot(*args, **kwargs):
 #     )
 #
 #
-def compute_cos_match_score(l_r):  # TODO This is causing NaN values during backprop, find bug
+def compute_cos_match_score(l_r):
     l, r = l_r
     return K.batch_dot(
         K.l2_normalize(l, axis=-1),
@@ -155,6 +154,9 @@ def ABCNN(
         conv_left = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(left_embed_padded)
         conv_right = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(right_embed_padded)
 
+    conv_left = Dropout(dropout)(conv_left)
+    conv_right = Dropout(dropout)(conv_right)
+
     pool_left = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_left)
     pool_right = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_right)
 
@@ -190,6 +192,9 @@ def ABCNN(
             conv_left = merge([conv_left, conv_attention_left], mode="mul")
             conv_right = merge([conv_right, conv_attention_right], mode="mul")
 
+        conv_left = Dropout(dropout)(conv_left)
+        conv_right = Dropout(dropout)(conv_right)
+
         pool_left = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_left)
         pool_right = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_right)
 
@@ -214,6 +219,7 @@ def ABCNN(
         right_sentence_rep = merge([right_sentence_rep] + right_sentence_representations, mode="concat")
 
     global_representation = merge([left_sentence_rep, right_sentence_rep], mode="concat")
+    global_representation = Dropout(dropout)(global_representation)
 
     # Add logistic regression on top.
     classify = Dense(1, activation="sigmoid")(global_representation)
@@ -221,7 +227,7 @@ def ABCNN(
     return Model([left_input, right_input], output=classify)
 
 
-def main():
+def _main():
     num_samples = 210
 
     left_seq_len = 12
@@ -242,7 +248,7 @@ def main():
     ]
     Y = np.random.randint(0, 2, (num_samples,))
 
-    # plot_all(left_seq_len, right_seq_len, vocab_size, embed_dimensions, nb_filter, filter_width)
+    _plot_all(left_seq_len, right_seq_len, embed_dimensions, nb_filter, filter_width)
 
     model = ABCNN(
         left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
@@ -257,48 +263,48 @@ def main():
     print(model.predict(X)[0])
 
 
-def plot_all(left_seq_len, right_seq_len, vocab_size, embed_dimensions, nb_filter, filter_width):
+def _plot_all(left_seq_len, right_seq_len, embed_dimensions, nb_filter, filter_width):
     bcnn = ABCNN(
-        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
         embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
         collect_sentence_representations=True, abcnn_1=False, abcnn_2=False
     )
     plot(bcnn, to_file="bcnn.svg")
 
     bcnn_deep_nocollect = ABCNN(
-        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=4,
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=4,
         embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
         collect_sentence_representations=False, abcnn_1=False, abcnn_2=False
     )
     plot(bcnn_deep_nocollect, to_file="bcnn_deep_nocollect.svg")
 
     abcnn1 = ABCNN(
-        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
         embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
         collect_sentence_representations=True, abcnn_1=True, abcnn_2=False
     )
     plot(abcnn1, to_file="abcnn1.svg")
 
     abcnn2 = ABCNN(
-        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
         embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
         collect_sentence_representations=True, abcnn_1=False, abcnn_2=True
     )
     plot(abcnn2, to_file="abcnn2.svg")
 
     abcnn3 = ABCNN(
-        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=2,
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
         embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
         collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
     )
     plot(abcnn3, to_file="abcnn3.svg")
 
     abcnn3_deep = ABCNN(
-        left_seq_len=left_seq_len, right_seq_len=right_seq_len, vocab_size=vocab_size, depth=4,
+        left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=4,
         embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
         collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
     )
     plot(abcnn3_deep, to_file="abcnn3-deep.svg")
 
 if __name__ == "__main__":
-    main()
+    _main()
