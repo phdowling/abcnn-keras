@@ -103,8 +103,8 @@ def ABCNN(
     # left_embed = Embedding(input_dim=vocab_size, output_dim=embed_dimensions, dropout=dropout)(left_input)
     # right_embed = Embedding(input_dim=vocab_size, output_dim=embed_dimensions, dropout=dropout)(right_input)
 
+    filter_width = filter_widths.pop(0)
     if abcnn_1:
-        filter_width = filter_widths.pop(0)
         match_score = MatchScore(left_embed, right_embed, mode=mode)
 
         # compute attention
