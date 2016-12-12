@@ -257,7 +257,7 @@ def _main():
 
     model = ABCNN(
         left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
-        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_widths=filter_width,
         collect_sentence_representations=True, abcnn_1=True, abcnn_2=True,
         mode="euclidean",
         # mode="cos"
@@ -271,42 +271,42 @@ def _main():
 def _plot_all(left_seq_len, right_seq_len, embed_dimensions, nb_filter, filter_width):
     bcnn = ABCNN(
         left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
-        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_widths=filter_width,
         collect_sentence_representations=True, abcnn_1=False, abcnn_2=False
     )
     plot(bcnn, to_file="bcnn.svg")
 
     bcnn_deep_nocollect = ABCNN(
         left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=4,
-        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_widths=filter_width,
         collect_sentence_representations=False, abcnn_1=False, abcnn_2=False
     )
     plot(bcnn_deep_nocollect, to_file="bcnn_deep_nocollect.svg")
 
     abcnn1 = ABCNN(
         left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
-        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_widths=filter_width,
         collect_sentence_representations=True, abcnn_1=True, abcnn_2=False
     )
     plot(abcnn1, to_file="abcnn1.svg")
 
     abcnn2 = ABCNN(
         left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
-        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_widths=filter_width,
         collect_sentence_representations=True, abcnn_1=False, abcnn_2=True
     )
     plot(abcnn2, to_file="abcnn2.svg")
 
     abcnn3 = ABCNN(
         left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
-        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_widths=filter_width,
         collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
     )
     plot(abcnn3, to_file="abcnn3.svg")
 
     abcnn3_deep = ABCNN(
         left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=4,
-        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_width=filter_width,
+        embed_dimensions=embed_dimensions, nb_filter=nb_filter, filter_widths=filter_width,
         collect_sentence_representations=True, abcnn_1=True, abcnn_2=True
     )
     plot(abcnn3_deep, to_file="abcnn3-deep.svg")
