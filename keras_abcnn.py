@@ -1,6 +1,6 @@
 from __future__ import print_function
 from keras import backend as K
-from keras.layers import Input, Convolution1D, Convolution2D, AveragePooling1D, GlobalAveragePooling1D, Dense, Lambda, merge, TimeDistributed, RepeatVector, Permute, ZeroPadding1D, ZeroPadding2D, Reshape, Dropout
+from keras.layers import Input, Convolution1D, Convolution2D, AveragePooling1D, GlobalAveragePooling1D, Dense, Lambda, merge, TimeDistributed, RepeatVector, Permute, ZeroPadding1D, ZeroPadding2D, Reshape, Dropout, BatchNormalization
 from keras.models import Model
 import numpy as np
 
@@ -82,7 +82,7 @@ def MatchScore(l, r, mode="euclidean"):
 
 def ABCNN(
         left_seq_len, right_seq_len, embed_dimensions, nb_filter, filter_widths,
-        depth=2, dropout=0.4, abcnn_1=True, abcnn_2=True, collect_sentence_representations=False, mode="euclidean"
+        depth=2, dropout=0.4, abcnn_1=True, abcnn_2=True, collect_sentence_representations=False, mode="euclidean", batch_normalize=True
 ):
     assert depth >= 1, "Need at least one layer to build ABCNN"
     assert not (depth == 1 and abcnn_2), "Cannot build ABCNN-2 with only one layer!"
@@ -100,8 +100,10 @@ def ABCNN(
 
     left_embed = left_input
     right_embed = right_input
-    # left_embed = Embedding(input_dim=vocab_size, output_dim=embed_dimensions, dropout=dropout)(left_input)
-    # right_embed = Embedding(input_dim=vocab_size, output_dim=embed_dimensions, dropout=dropout)(right_input)
+
+    if batch_normalize:
+        left_embed = BatchNormalization()(left_embed)
+        right_embed = BatchNormalization()(right_embed)
 
     filter_width = filter_widths.pop(0)
     if abcnn_1:
@@ -136,9 +138,7 @@ def ABCNN(
         conv_left = Convolution2D(
             nb_filter=nb_filter, nb_row=filter_width, nb_col=embed_dimensions, activation="tanh", border_mode="valid",
             dim_ordering="th"
-        )(
-            left_embed_padded
-        )
+        )(left_embed_padded)
 
         # Reshape and Permute to get back to 1-D
         conv_left = (Reshape((conv_left._keras_shape[1], conv_left._keras_shape[2])))(conv_left)
@@ -147,9 +147,9 @@ def ABCNN(
         conv_right = Convolution2D(
             nb_filter=nb_filter, nb_row=filter_width, nb_col=embed_dimensions, activation="tanh",
             border_mode="valid",
-            dim_ordering="th")(
-            right_embed_padded
-        )
+            dim_ordering="th"
+        )(right_embed_padded)
+
         # Reshape and Permute to get back to 1-D
         conv_right = (Reshape((conv_right._keras_shape[1], conv_right._keras_shape[2])))(conv_right)
         conv_right = Permute((2, 1))(conv_right)
@@ -161,6 +161,10 @@ def ABCNN(
         conv_left = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(left_embed_padded)
         conv_right = Convolution1D(nb_filter, filter_width, activation="tanh", border_mode="valid")(right_embed_padded)
 
+    if batch_normalize:
+        conv_left = BatchNormalization()(conv_left)
+        conv_right = BatchNormalization()(conv_right)
+
     conv_left = Dropout(dropout)(conv_left)
     conv_right = Dropout(dropout)(conv_right)
 
@@ -168,7 +172,7 @@ def ABCNN(
     pool_right = AveragePooling1D(pool_length=filter_width, stride=1, border_mode="valid")(conv_right)
 
     assert pool_left._keras_shape[1] == left_seq_len, "%s != %s" % (pool_left._keras_shape[1], left_seq_len)
-    assert pool_right._keras_shape[1] == right_seq_len , "%s != %s" % (pool_right._keras_shape[1], right_seq_len)
+    assert pool_right._keras_shape[1] == right_seq_len, "%s != %s" % (pool_right._keras_shape[1], right_seq_len)
 
     if collect_sentence_representations or depth == 1:  # always collect last layers global representation
         left_sentence_representations.append(GlobalAveragePooling1D()(conv_left))
@@ -199,6 +203,10 @@ def ABCNN(
             # apply attention  TODO is "multiply each value by the sum of it's respective attention row/column" correct?
             conv_left = merge([conv_left, conv_attention_left], mode="mul")
             conv_right = merge([conv_right, conv_attention_right], mode="mul")
+
+        if batch_normalize:
+            conv_left = BatchNormalization()(conv_left)
+            conv_right = BatchNormalization()(conv_right)
 
         conv_left = Dropout(dropout)(conv_left)
         conv_right = Dropout(dropout)(conv_right)
@@ -236,7 +244,7 @@ def ABCNN(
 
 
 def _main():
-    num_samples = 210
+    num_samples = 500
 
     left_seq_len = 12
     right_seq_len = 8
@@ -267,7 +275,7 @@ def _main():
     )
 
     model.compile(optimizer="rmsprop", loss="binary_crossentropy", metrics=["acc"])
-    model.fit(X, Y, nb_epoch=3)
+    model.fit(X, Y, nb_epoch=40)
     print(model.predict(X)[0])
 
 
