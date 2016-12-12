@@ -246,13 +246,13 @@ def ABCNN(
 def _main():
     num_samples = 500
 
-    left_seq_len = 12
+    left_seq_len = 25
     right_seq_len = 8
 
-    embed_dimensions = 50
+    embed_dimensions = 300
 
-    nb_filter = 64
-    filter_width = 3
+    nb_filter = 300
+    filter_width = [4, 3]
 
     # X = [
     #     np.random.randint(0, vocab_size, (num_samples, left_seq_len,)),
@@ -264,7 +264,7 @@ def _main():
     ]
     Y = np.random.randint(0, 2, (num_samples,))
 
-    _plot_all(left_seq_len, right_seq_len, embed_dimensions, nb_filter, filter_width)
+    # _plot_all(left_seq_len, right_seq_len, embed_dimensions, nb_filter, filter_width)
 
     model = ABCNN(
         left_seq_len=left_seq_len, right_seq_len=right_seq_len, depth=2,
