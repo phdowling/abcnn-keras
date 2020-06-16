@@ -30,7 +30,6 @@ setup(
 
     # Author details
     author='Philipp Dowling',
-    author_email='philipp.dowling@gmail.com',
 
     # Choose your license
     license='MIT',
